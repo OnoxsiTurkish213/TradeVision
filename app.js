@@ -446,40 +446,52 @@ function initChart() {
   });
 }
 
-async function loadCryptoChart(coinId, range) {
+async function loadStockChart(symbol, range) {
   showChartState('loading');
 
-  const daysMap = { '1h':1, '1d':1, '7d':7, '30d':30, '365d':365 };
-  const days    = daysMap[range] || 1;
-  const interval = days === 1 ? 'minutely' : days <= 7 ? 'hourly' : 'daily';
+  // Finnhub free tier için daha geniş aralık ve uygun resolution
+  const now     = Math.floor(Date.now() / 1000);
+  const fromMap = {
+    '1h':  now - 86400,      // 1 saat göstermek için 1 günlük veri çek
+    '1d':  now - 86400 * 5,  // 5 günlük veri — hafta içi boşlukları doldurmak için
+    '7d':  now - 86400 * 14,
+    '30d': now - 86400 * 60,
+    '365d':now - 86400 * 400,
+  };
+  const resMap = {
+    '1h':  '15',
+    '1d':  '60',
+    '7d':  'D',
+    '30d': 'D',
+    '365d':'W',
+  };
+  const from = fromMap[range] || fromMap['1d'];
+  const res  = resMap[range]  || '60';
 
   try {
-    const d = await proxyGet('coingecko',
-      `coins/${coinId}/market_chart?vs_currency=usd&days=${days}&interval=${interval}`
+    const d = await proxyGet('finnhub',
+      `stock/candle?symbol=${symbol}&resolution=${res}&from=${from}&to=${now}`
     );
 
-    if (!d.prices || !d.prices.length) throw new Error('no data');
+    if (!d || d.s !== 'ok' || !d.t?.length) throw new Error('no candle data');
 
-    let prices = d.prices;
-    if (range === '1h') prices = prices.slice(-60);
-
-    // Deduplicate timestamps
     const seen = new Set();
     const chartData = [];
-    for (const [ms, val] of prices) {
-      const t = Math.floor(ms / 1000);
-      if (!seen.has(t)) { seen.add(t); chartData.push({ time: t, value: val }); }
+    for (let i = 0; i < d.t.length; i++) {
+      const t = d.t[i];
+      if (!seen.has(t)) {
+        seen.add(t);
+        chartData.push({ time: t, open: d.o[i], high: d.h[i], low: d.l[i], close: d.c[i] });
+      }
     }
+    chartData.sort((a,b) => a.time - b.time);
 
     showChartState('ready');
     initChart();
-    tvSeries = tvChart.addAreaSeries({
-      lineColor: '#00d4ff',
-      topColor:  'rgba(0,212,255,0.2)',
-      bottomColor: 'rgba(0,212,255,0)',
-      lineWidth: 2,
-      priceLineVisible: false,
-      lastValueVisible: true,
+    tvSeries = tvChart.addCandlestickSeries({
+      upColor: '#00e676', downColor: '#ff3d57',
+      borderUpColor: '#00e676', borderDownColor: '#ff3d57',
+      wickUpColor: '#00e676', wickDownColor: '#ff3d57',
     });
     tvSeries.setData(chartData);
     tvChart.timeScale().fitContent();
