@@ -246,7 +246,8 @@ async function fetchAndRenderStock(sym) {
     let price, pct;
 
     if (sym.endsWith('.IS')) {
-      const d = await proxyGet('yahoo', encodeURIComponent(sym) + '?interval=1d&range=5d');
+      const cleanSym = sym.replace(/\.[A-Z]\.IS$/, '.IS'); // TOASO.E.IS -> TOASO.IS
+      const d = await proxyGet('yahoo', encodeURIComponent(cleanSym) + '?interval=1d&range=5d');
       const result = d?.chart?.result?.[0];
       if (!result) return;
       const meta = result.meta;
@@ -333,14 +334,25 @@ async function fetchStockDetail(symbol) {
 
     if (symbol.endsWith('.IS')) {
       // BIST - Yahoo Finance
-      const d = await proxyGet('yahoo', encodeURIComponent(symbol) + '?interval=1d&range=5d');
+      const cleanSym = symbol.replace(/\.[A-Z]\.IS$/, '.IS');
+      const d = await proxyGet('yahoo', encodeURIComponent(cleanSym) + '?interval=1d&range=5d');
       const result = d?.chart?.result?.[0];
       if (!result) return;
       const meta = result.meta;
       price = meta.regularMarketPrice;
       const prev = meta.previousClose || meta.chartPreviousClose;
       pct = prev ? ((price - prev) / prev * 100) : 0;
-      profile = { exchange: 'BIST', currency: 'TRY', country: 'TR' };
+      const q2 = {
+        pc: prev || 0,
+        o:  meta.regularMarketOpen || 0,
+        h:  meta.regularMarketDayHigh || 0,
+        l:  meta.regularMarketDayLow  || 0,
+      };
+      profile = { exchange: 'Borsa İstanbul', currency: 'TRY', country: 'TR', finnhubIndustry: '—' };
+      document.getElementById('modalPrice').textContent = `₺${price.toFixed(2)}`;
+      setChange('modalChange', pct, 'günlük');
+      renderStockStats(q2, profile, symbol);
+      return;
     } else {
       // ABD - Finnhub
       const [q, p] = await Promise.all([
@@ -542,8 +554,9 @@ async function loadStockChart(symbol, range) {
   const yahooRange  = rangeMap[range]    || '5d';
 
   try {
+    const cleanSymbol = symbol.replace(/\.[A-Z]\.IS$/, '.IS');
     const d = await proxyGet('yahoo',
-      `${encodeURIComponent(symbol)}?interval=${interval}&range=${yahooRange}`
+      `${encodeURIComponent(cleanSymbol)}?interval=${interval}&range=${yahooRange}`
     );
 
     if (!d?.chart?.result?.[0]) throw new Error('no data');
