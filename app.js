@@ -608,39 +608,16 @@ async function analyzeWithAI() {
       const vol_mc_ratio = c.market_cap > 0 ? ((c.total_volume / c.market_cap) * 100).toFixed(1) : '—';
       const ath_dist = (c.ath_change_percentage || 0);
 
-      prompt = `Aşağıdaki kripto para verilerini detaylı analiz et. SADECE Türkçe yaz. 4-5 paragraf yaz, her paragraf en az 3 cümle olsun. Başlık kullanma, akıcı metin yaz.
+      prompt = `${c.name} (${c.symbol.toUpperCase()}) için hızlı analiz yap. Türkçe, kısa ve net olsun — 3 paragraf max.
 
-${c.name} (${c.symbol.toUpperCase()}) — Anlık Veriler:
-• Fiyat: $${c.current_price} | 24s: ${chg24>=0?'+':''}${chg24.toFixed(2)}% | 7g: ${chg7>=0?'+':''}${chg7.toFixed(2)}%
-• Piyasa Değeri: $${formatBig(c.market_cap)} (Sıra: #${c.market_cap_rank})
-• 24s Hacim: $${formatBig(c.total_volume)} (Hacim/MC oranı: %${vol_mc_ratio})
-• 24s Aralık: $${c.high_24h} - $${c.low_24h}
-• ATH: $${c.ath} | ATH'dan uzaklık: ${ath_dist.toFixed(1)}%
+Veriler: Fiyat $${c.current_price} | 24s ${chg24>=0?'+':''}${chg24.toFixed(2)}% | 7g ${chg7>=0?'+':''}${chg7.toFixed(2)}% | MC $${formatBig(c.market_cap)} (#${c.market_cap_rank}) | Hacim $${formatBig(c.total_volume)} | ATH $${c.ath} (uzaklık ${ath_dist.toFixed(1)}%)
 
-Sırayla şunları yaz:
-1. Fiyat hareketi ve momentum analizi: 24 saatlik ve 7 günlük hareketi yorumla, trendin yönü ve gücü nedir?
-2. Hacim analizi: Hacim fiyat hareketini destekliyor mu? Hacim/MC oranı ne anlama geliyor?
-3. Tarihsel konum: ATH'a göre fiyat nerede, bu seviye tarihsel olarak ne ifade ediyor?
-4. Risk ve fırsat değerlendirmesi: Mevcut piyasa koşullarında bu varlık için öne çıkan riskler ve olası fırsatlar neler?
-5. Genel piyasa bağlamı: Bu coin'i etkileyen makro faktörler ve sektörel gelişmeler neler olabilir?
-
-NOT: "Al" veya "sat" tavsiyesi kesinlikle verme. Yalnızca teknik ve temel analiz yap.`;
+Şunları yaz: trend durumu, hacim yorumu, genel değerlendirme ve kısa vadeli görüş. Somut konuş, rakam kullan. Sonuna "(Bu analiz yatırım tavsiyesi değildir)" ekle.`;
 
     } else {
-      prompt = `Aşağıdaki hisse senedi hakkında detaylı analiz yaz. SADECE Türkçe yaz. 4-5 paragraf yaz, her paragraf en az 3 cümle olsun. Başlık kullanma, akıcı metin yaz.
+      prompt = `${currentAsset.name} (${currentAsset.id}) hissesi için hızlı analiz yap. Türkçe, kısa ve net — 3 paragraf max. Borsa: ${currentAsset.id.endsWith('.IS') ? 'BIST' : 'NYSE/NASDAQ'}.
 
-Hisse: ${currentAsset.id}
-Şirket: ${currentAsset.name}
-Borsa: ${currentAsset.id.endsWith('.IS') ? 'Borsa İstanbul (BIST)' : 'ABD Borsası (NYSE/NASDAQ)'}
-
-Sırayla şunları yaz:
-1. Şirket profili: Bu şirket ne iş yapıyor, hangi sektörde, sektördeki konumu nedir?
-2. Temel analiz: Şirketin güçlü ve zayıf yönleri, rekabet avantajları, büyüme potansiyeli nedir?
-3. Makroekonomik bağlam: Şirketi etkileyen ekonomik faktörler, sektörel trendler ve global gelişmeler neler?
-4. Teknik görünüm: Genel fiyat trendi, önemli destek-direnç bölgeleri ve momentuma dair yorum yap.
-5. Sonuç: Yatırımcıların bu hisse için dikkat etmesi gereken kritik faktörler neler?
-
-NOT: "Al" veya "sat" tavsiyesi kesinlikle verme. Yalnızca teknik ve temel analiz yap.`;
+Şunları yaz: şirket ne yapar ve sektördeki yeri, son dönem performans ve öne çıkan riskler/fırsatlar, kısa vadeli görüş. Somut konuş. Sonuna "(Bu analiz yatırım tavsiyesi değildir)" ekle.`;
     }
 
     const reply = await callAI(prompt);
@@ -669,7 +646,7 @@ async function sendAIChat() {
   chatHistory.push({ role: 'user', content: msg });
 
   try {
-    const reply = await callAIChat(chatHistory);
+    const reply = await callAIChat(chatHistory, false);
     typing.remove();
     addMsg(reply, 'bot');
     chatHistory.push({ role: 'assistant', content: reply });
@@ -708,7 +685,12 @@ function addTyping() {
 }
 
 // ── AI CALL ──────────────────────────────────────────────
-const SYSTEM_PROMPT = 'Sen TradeVision platformunun finansal analiz asistanısın. Her zaman Türkçe yanıt verirsin. Alım-satım tavsiyesi vermezsin. Detaylı, bilgilendirici ve akıcı Türkçe cevaplar verirsin.';
+const SYSTEM_PROMPT = `Sen TradeVision uygulamasının finansal asistanısın. Kurallar:
+1. Her zaman Türkçe yaz
+2. Kısa ve net konuş — gereksiz uzatma
+3. Sohbette doğal ve samimi ol, her mesajda "nasıl yardımcı olabilirim" gibi klişe cümle kurma
+4. Analiz yaparken somut rakam ve yorum ver, boş laf etme
+5. Yatırım tavsiyesi verebilirsin ama "bu bir tavsiye değildir" notu ekle`;
 
 async function callAI(prompt) {
   return callAIChat([{ role: 'user', content: prompt }]);
@@ -719,10 +701,7 @@ async function callAIChat(messages) {
   try {
     const d = await proxyPost('groq', {
       model: 'llama-3.3-70b-versatile',
-      messages: [
-        { role: 'system', content: SYSTEM_PROMPT },
-        ...messages
-      ],
+      messages: [{ role: 'system', content: SYSTEM_PROMPT }, ...messages],
       max_tokens: 1200,
       temperature: 0.7
     });
