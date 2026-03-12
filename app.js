@@ -240,19 +240,32 @@ async function loadStockList(exchange) {
 
 async function fetchAndRenderStock(sym) {
   try {
-    const d  = await proxyGet('finnhub', `quote?symbol=${sym}`);
-    const el = document.getElementById(`sr_${sym.replace(/\./g,'_')}`);
-    if (!el || !d.c || d.c === 0) return;
-
-    const pct      = ((d.c - d.pc) / d.pc * 100);
+    const el       = document.getElementById(`sr_${sym.replace(/\./g,'_')}`);
     const name     = sym.replace('.IS','');
-    const currency = sym.endsWith('.IS') ? '₺' : '$';
+    const currency = sym.endsWith('.IS') ? '\u20ba' : '$';
+    let price, pct;
 
+    if (sym.endsWith('.IS')) {
+      const d = await proxyGet('yahoo', encodeURIComponent(sym) + '?interval=1d&range=5d');
+      const result = d?.chart?.result?.[0];
+      if (!result) return;
+      const meta = result.meta;
+      price = meta.regularMarketPrice;
+      const prev = meta.previousClose || meta.chartPreviousClose;
+      pct = prev ? ((price - prev) / prev * 100) : 0;
+    } else {
+      const d = await proxyGet('finnhub', `quote?symbol=${sym}`);
+      if (!d.c || d.c === 0) return;
+      price = d.c;
+      pct = ((d.c - d.pc) / d.pc * 100);
+    }
+
+    if (!el || !price) return;
     el.classList.remove('skeleton');
     el.innerHTML = `
       <span class="asset-sym" style="font-weight:800;font-size:.8rem">${name}</span>
       <div class="asset-info"><div><div class="asset-name">${name}</div></div></div>
-      <div class="asset-price">${currency}${d.c.toFixed(2)}</div>
+      <div class="asset-price">${currency}${price.toFixed(2)}</div>
       <div class="asset-chg ${pct>=0?'pos-bg':'neg-bg'}">${pct>=0?'+':''}${pct.toFixed(2)}%</div>`;
     el.onclick = () => openStockDetail(sym, name);
   } catch(e) {}
@@ -315,27 +328,45 @@ async function openStockDetail(symbol, name) {
 
 async function fetchStockDetail(symbol) {
   try {
-    const [q, p] = await Promise.all([
-      proxyGet('finnhub', `quote?symbol=${symbol}`),
-      proxyGet('finnhub', `stock/profile2?symbol=${symbol}`)
-    ]);
-
-    if (!q.c || q.c === 0) return;
-
     const currency = symbol.endsWith('.IS') ? '₺' : '$';
-    document.getElementById('modalPrice').textContent = `${currency}${q.c.toFixed(2)}`;
+    let price, pct, profile = {};
 
-    const chg = ((q.c - q.pc) / q.pc * 100);
-    setChange('modalChange', chg, 'günlük');
-
-    if (p.logo) {
-      const img = document.getElementById('modalLogo');
-      img.src = p.logo;
-      img.style.display = 'block';
+    if (symbol.endsWith('.IS')) {
+      // BIST - Yahoo Finance
+      const d = await proxyGet('yahoo', encodeURIComponent(symbol) + '?interval=1d&range=5d');
+      const result = d?.chart?.result?.[0];
+      if (!result) return;
+      const meta = result.meta;
+      price = meta.regularMarketPrice;
+      const prev = meta.previousClose || meta.chartPreviousClose;
+      pct = prev ? ((price - prev) / prev * 100) : 0;
+      profile = { exchange: 'BIST', currency: 'TRY', country: 'TR' };
+    } else {
+      // ABD - Finnhub
+      const [q, p] = await Promise.all([
+        proxyGet('finnhub', `quote?symbol=${symbol}`),
+        proxyGet('finnhub', `stock/profile2?symbol=${symbol}`)
+      ]);
+      if (!q.c || q.c === 0) return;
+      price = q.c;
+      pct = ((q.c - q.pc) / q.pc * 100);
+      profile = p;
+      if (p.logo) {
+        const img = document.getElementById('modalLogo');
+        img.src = p.logo;
+        img.style.display = 'block';
+      }
+      if (p.name) document.getElementById('modalName').textContent = p.name;
+      renderStockStats(q, p, symbol);
     }
-    if (p.name) document.getElementById('modalName').textContent = p.name;
 
-    renderStockStats(q, p, symbol);
+    document.getElementById('modalPrice').textContent = `${currency}${price.toFixed(2)}`;
+    setChange('modalChange', pct, 'günlük');
+
+    if (symbol.endsWith('.IS')) {
+      const fakeQ = { pc: 0, o: 0, h: 0, l: 0 };
+      renderStockStats(fakeQ, profile, symbol);
+    }
   } catch(e) {}
 }
 
@@ -577,42 +608,39 @@ async function analyzeWithAI() {
       const vol_mc_ratio = c.market_cap > 0 ? ((c.total_volume / c.market_cap) * 100).toFixed(1) : '—';
       const ath_dist = (c.ath_change_percentage || 0);
 
-      prompt = `Sen bir kripto para teknik analisti olarak aşağıdaki verileri analiz et. Yanıtın TAM OLARAK Türkçe olsun, kısa ve net paragraflar halinde yaz. Başlıklar kullanma.
+      prompt = `Aşağıdaki kripto para verilerini detaylı analiz et. SADECE Türkçe yaz. 4-5 paragraf yaz, her paragraf en az 3 cümle olsun. Başlık kullanma, akıcı metin yaz.
 
-=== ${c.name} (${c.symbol.toUpperCase()}) ANALİZ VERİLERİ ===
-Güncel Fiyat: $${c.current_price}
-24 Saat Değişim: ${chg24>=0?'+':''}${chg24.toFixed(2)}%
-7 Gün Değişim: ${chg7>=0?'+':''}${chg7.toFixed(2)}%
-Piyasa Değeri: $${formatBig(c.market_cap)} (#${c.market_cap_rank})
-24s İşlem Hacmi: $${formatBig(c.total_volume)}
-Hacim/Piyasa Değeri Oranı: %${vol_mc_ratio}
-24s Yüksek/Düşük: $${c.high_24h} / $${c.low_24h}
-ATH (Tüm Zamanlar En Yüksek): $${c.ath}
-ATH'a Uzaklık: ${ath_dist.toFixed(1)}%
+${c.name} (${c.symbol.toUpperCase()}) — Anlık Veriler:
+• Fiyat: $${c.current_price} | 24s: ${chg24>=0?'+':''}${chg24.toFixed(2)}% | 7g: ${chg7>=0?'+':''}${chg7.toFixed(2)}%
+• Piyasa Değeri: $${formatBig(c.market_cap)} (Sıra: #${c.market_cap_rank})
+• 24s Hacim: $${formatBig(c.total_volume)} (Hacim/MC oranı: %${vol_mc_ratio})
+• 24s Aralık: $${c.high_24h} - $${c.low_24h}
+• ATH: $${c.ath} | ATH'dan uzaklık: ${ath_dist.toFixed(1)}%
 
-Şunları analiz et:
-1. Mevcut kısa vadeli trend (24s ve 7 günlük harekete göre)
-2. Hacim analizi — yüksek hacim trendin gücünü gösteriyor mu?
-3. Fiyat konumu — ATH'a göre nerede, tarihi bağlam nedir?
-4. Risk faktörleri neler?
-5. Genel değerlendirme (2-3 cümle)
+Sırayla şunları yaz:
+1. Fiyat hareketi ve momentum analizi: 24 saatlik ve 7 günlük hareketi yorumla, trendin yönü ve gücü nedir?
+2. Hacim analizi: Hacim fiyat hareketini destekliyor mu? Hacim/MC oranı ne anlama geliyor?
+3. Tarihsel konum: ATH'a göre fiyat nerede, bu seviye tarihsel olarak ne ifade ediyor?
+4. Risk ve fırsat değerlendirmesi: Mevcut piyasa koşullarında bu varlık için öne çıkan riskler ve olası fırsatlar neler?
+5. Genel piyasa bağlamı: Bu coin'i etkileyen makro faktörler ve sektörel gelişmeler neler olabilir?
 
-ÖNEMLİ: Kesinlikle "al" veya "sat" tavsiyesi verme. Sadece teknik analiz yap.`;
+NOT: "Al" veya "sat" tavsiyesi kesinlikle verme. Yalnızca teknik ve temel analiz yap.`;
 
     } else {
-      prompt = `Sen bir hisse senedi teknik analisti olarak aşağıdaki hisse hakkında analiz yap. Yanıtın TAM OLARAK Türkçe olsun. Kısa ve net paragraflar halinde yaz, başlıklar kullanma.
+      prompt = `Aşağıdaki hisse senedi hakkında detaylı analiz yaz. SADECE Türkçe yaz. 4-5 paragraf yaz, her paragraf en az 3 cümle olsun. Başlık kullanma, akıcı metin yaz.
 
 Hisse: ${currentAsset.id}
 Şirket: ${currentAsset.name}
 Borsa: ${currentAsset.id.endsWith('.IS') ? 'Borsa İstanbul (BIST)' : 'ABD Borsası (NYSE/NASDAQ)'}
 
-Bu hisse hakkında kısa bir analiz yap:
-1. Şirket ve sektör hakkında genel bilgi
-2. Teknik açıdan önemli seviyeler
-3. Makroekonomik faktörler ve sektörel durum
-4. Genel değerlendirme
+Sırayla şunları yaz:
+1. Şirket profili: Bu şirket ne iş yapıyor, hangi sektörde, sektördeki konumu nedir?
+2. Temel analiz: Şirketin güçlü ve zayıf yönleri, rekabet avantajları, büyüme potansiyeli nedir?
+3. Makroekonomik bağlam: Şirketi etkileyen ekonomik faktörler, sektörel trendler ve global gelişmeler neler?
+4. Teknik görünüm: Genel fiyat trendi, önemli destek-direnç bölgeleri ve momentuma dair yorum yap.
+5. Sonuç: Yatırımcıların bu hisse için dikkat etmesi gereken kritik faktörler neler?
 
-ÖNEMLİ: Kesinlikle "al" veya "sat" tavsiyesi verme. Sadece teknik ve temel analiz yap.`;
+NOT: "Al" veya "sat" tavsiyesi kesinlikle verme. Yalnızca teknik ve temel analiz yap.`;
     }
 
     const reply = await callAI(prompt);
@@ -627,6 +655,8 @@ Bu hisse hakkında kısa bir analiz yap:
 }
 
 // ── AI CHAT ───────────────────────────────────────────────
+let chatHistory = [];
+
 async function sendAIChat() {
   const input = document.getElementById('aiChatInput');
   const msg   = input.value.trim();
@@ -636,24 +666,25 @@ async function sendAIChat() {
   input.value = '';
   const typing = addTyping();
 
-  const context = currentAsset
-    ? `Kullanıcı şu anda ${currentAsset.type === 'crypto' ? 'kripto' : 'hisse'} olarak ${currentAsset.id} varlığını inceliyor.`
-    : '';
-
-  const prompt = `Sen TradeVision'ın AI asistanısın. Kripto ve hisse piyasaları uzmanısın. Yanıtların her zaman Türkçe olmalı. Kısa, net ve bilgilendirici cevaplar ver. Kesinlikle alım-satım tavsiyesi verme.
-
-${context}
-
-Kullanıcı sorusu: ${msg}`;
+  chatHistory.push({ role: 'user', content: msg });
 
   try {
-    const reply = await callAI(prompt);
+    const reply = await callAIChat(chatHistory);
     typing.remove();
     addMsg(reply, 'bot');
+    chatHistory.push({ role: 'assistant', content: reply });
+    // Geçmişi 20 mesajla sınırla
+    if (chatHistory.length > 20) chatHistory = chatHistory.slice(-20);
   } catch(e) {
     typing.remove();
     addMsg('Şu an yanıt veremiyorum, lütfen tekrar deneyin.', 'bot');
+    chatHistory.pop();
   }
+}
+
+function clearChat() {
+  chatHistory = [];
+  document.getElementById('aiMessages').innerHTML = '';
 }
 
 function addMsg(text, role) {
@@ -677,20 +708,23 @@ function addTyping() {
 }
 
 // ── AI CALL ──────────────────────────────────────────────
+const SYSTEM_PROMPT = 'Sen TradeVision platformunun finansal analiz asistanısın. Her zaman Türkçe yanıt verirsin. Alım-satım tavsiyesi vermezsin. Detaylı, bilgilendirici ve akıcı Türkçe cevaplar verirsin.';
+
 async function callAI(prompt) {
+  return callAIChat([{ role: 'user', content: prompt }]);
+}
+
+async function callAIChat(messages) {
   // Try Groq first
   try {
     const d = await proxyPost('groq', {
       model: 'llama-3.3-70b-versatile',
       messages: [
-        {
-          role: 'system',
-          content: 'Sen TradeVision platformunun finansal analiz asistanısın. Her zaman Türkçe yanıt verirsin. Alım-satım tavsiyesi vermezsin.'
-        },
-        { role: 'user', content: prompt }
+        { role: 'system', content: SYSTEM_PROMPT },
+        ...messages
       ],
-      max_tokens: 700,
-      temperature: 0.6
+      max_tokens: 1200,
+      temperature: 0.7
     });
     if (d.choices?.[0]?.message?.content) {
       return d.choices[0].message.content.trim();
@@ -699,9 +733,14 @@ async function callAI(prompt) {
 
   // Fallback: Gemini
   try {
+    const geminiContents = messages.map(m => ({
+      role: m.role === 'assistant' ? 'model' : 'user',
+      parts: [{ text: m.content }]
+    }));
     const d = await proxyPost('gemini', {
-      contents: [{ parts: [{ text: prompt }] }],
-      generationConfig: { maxOutputTokens: 700, temperature: 0.6 }
+      system_instruction: { parts: [{ text: SYSTEM_PROMPT }] },
+      contents: geminiContents,
+      generationConfig: { maxOutputTokens: 1200, temperature: 0.7 }
     });
     if (d.candidates?.[0]?.content?.parts?.[0]?.text) {
       return d.candidates[0].content.parts[0].text.trim();
