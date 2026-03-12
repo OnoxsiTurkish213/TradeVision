@@ -284,8 +284,10 @@ async function openCryptoDetail(coinId) {
   renderCryptoStats(coin);
   resetAISection();
   openModal();
-
   setActiveTimeBtn('1d');
+
+  // Modal animasyonunun bitmesini bekle
+  await new Promise(r => setTimeout(r, 350));
   await loadCryptoChart(coinId, '1d');
 }
 
@@ -303,8 +305,9 @@ async function openStockDetail(symbol, name) {
   openModal();
   setActiveTimeBtn('1d');
 
-  // Load quote + chart in parallel
-  const [, ] = await Promise.all([
+  // Modal animasyonunun bitmesini bekle
+  await new Promise(r => setTimeout(r, 350));
+  await Promise.all([
     fetchStockDetail(symbol),
     loadStockChart(symbol, '1d')
   ]);
@@ -337,7 +340,8 @@ async function fetchStockDetail(symbol) {
 }
 
 function openModal() {
-  document.getElementById('detailModal').classList.remove('hidden');
+  const modal = document.getElementById('detailModal');
+  modal.classList.remove('hidden');
   document.body.style.overflow = 'hidden';
 }
 
@@ -422,8 +426,14 @@ function initChart() {
   destroyChart();
   const container = document.getElementById('tvChart');
   const isDark    = document.documentElement.getAttribute('data-theme') !== 'light';
-  const width     = container.offsetWidth  || container.parentElement.offsetWidth  || 340;
-  const height    = container.offsetHeight || container.parentElement.offsetHeight || 240;
+
+  // Container'a explicit boyut ver
+  const wrap   = container.parentElement;
+  const width  = wrap.offsetWidth  || window.innerWidth  - 32 || 340;
+  const height = 240;
+
+  container.style.width  = width  + 'px';
+  container.style.height = height + 'px';
 
   tvChart = LightweightCharts.createChart(container, {
     width,
@@ -448,7 +458,11 @@ function initChart() {
   });
 
   window.addEventListener('resize', () => {
-    if (tvChart) tvChart.applyOptions({ width: container.offsetWidth || 340 });
+    if (tvChart) {
+      const w = wrap.offsetWidth || window.innerWidth - 32;
+      container.style.width = w + 'px';
+      tvChart.applyOptions({ width: w });
+    }
   });
 }
 
